@@ -1,11 +1,14 @@
 package com.grabit.config;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.grabit.Utilities.Utility;
 import com.grabit.enums.CommonErrors;
 import com.grabit.exception.APIError;
 import com.grabit.exception.CustomException;
+import feign.FeignException;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.log4j.Log4j2;
@@ -133,6 +136,29 @@ public class APIExceptionHandler {
             log.info("Microservice Response : "+ex.getResponseBodyAsString());
             response.setStatus(500);
             return new APIError("REQUEST_FAILED","Request to the microservice failed");
+        }
+    }
+
+    @ExceptionHandler(value = FeignException.class)
+    public APIError handleFeignException(FeignException ex, HttpServletResponse response) {
+        response.setStatus(ex.status());
+        String errorBody=null;
+        try {
+            // Feign stores the actual response body here
+            errorBody = ex.contentUTF8();
+        } catch (Exception e) {
+            errorBody = ex.getMessage(); // fallback
+        }
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode node = mapper.readTree(errorBody);
+            String code = node.has("code") ? node.get("code").asText() : "UNKNOWN_ERROR";
+            String message = node.has("message") ? node.get("message").asText() : errorBody;
+            return new APIError(code, message);
+        } catch (Exception e) {
+            // if not JSON, return the raw text
+            log.info("Error in Handle Feign Exception : "+e.getMessage());
+            return new APIError("FEIGN_ERROR", errorBody);
         }
     }
 
