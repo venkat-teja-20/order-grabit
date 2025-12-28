@@ -3,8 +3,12 @@ package com.grabit.config;
 import com.grabit.mapper.DeliveryPartnerURLMapper;
 import com.grabit.mapper.MemberURLMapper;
 import com.grabit.mapper.RestaurantURLMapper;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
 
 @Configuration
 public class AppConfig {
@@ -23,4 +27,19 @@ public class AppConfig {
     public DeliveryPartnerURLMapper getDeliveryPartnerURLMapper(){
         return new DeliveryPartnerURLMapper(System.getenv("delivery_partner_url"));
     }
+
+    @Bean
+    public NewTopic updateRestaurantAndBranchOrdersKafkaTopic(){
+        return TopicBuilder
+                .name("update_restaurant_and_branch_orders")
+                .build();
+    }
+
+    @Bean
+    public NewTopic updateItemQuantityAndQuantitySoldKafkaTopic(){
+        return TopicBuilder
+                .name("update_item_quantity_and_sold_quantity")
+                .build();
+    }
+
 }

@@ -30,6 +30,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.Message;
+import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
@@ -69,12 +78,18 @@ public class OrderService {
 
     private OkHttpClient client=new OkHttpClient();
 
+    @Autowired
+    private KafkaTemplate<Object,Object> kafkaTemplate;
+
     @Transactional
-    public OrderDTO placeOrder(OrderDTO request, String memberId){
+    public OrderDTO placeOrder(OrderDTO request, String memberId, Map<String,String> headers){
         //member check condition
         //Map<String,Object> memberCheckResult= memberInterface.checkIfMemberExists(memberId);
         String url = memberURLMapper.getMemberExistsURL(memberId);
-        Map<String,Object> memberCheckResult= restTemplate.getForObject(url,Map.class);
+        HttpHeaders httpHeaders=Utility.buildHttpHeader(headers);
+        HttpEntity<Void> httpEntity= new HttpEntity<>(httpHeaders);
+        ResponseEntity<Map> memberCheckEntity= restTemplate.exchange(url, HttpMethod.GET,httpEntity,Map.class);
+        Map memberCheckResult=memberCheckEntity.getBody();
         if(Utility.isNullOrEmpty(memberCheckResult) || !Boolean.parseBoolean(String.valueOf(memberCheckResult.get("is_present")))){
             throw new CustomException(Utility.buildErrorObject("MEMBER_NOT_FOUND","Member doesn't exists with provided member id",404,"placeOrder"));
         }
@@ -82,13 +97,15 @@ public class OrderService {
         //restaurant & branch check condition
 //        Map<String,Object> restaurantCheckResult=restaurantInterface.checkRestaurantExists(String.valueOf(request.getRestaurantId()));
         String restaurantUrl = restaurantURLMapper.getRestaurantExistsURL(String.valueOf(request.getRestaurantId()));
-        Map<String,Object> restaurantCheckResult= restTemplate.getForObject(restaurantUrl,Map.class);
+        ResponseEntity<Map> restaurantCheckEntity= restTemplate.exchange(restaurantUrl, HttpMethod.GET,httpEntity,Map.class);
+        Map restaurantCheckResult= restaurantCheckEntity.getBody();
         if(Utility.isNullOrEmpty(restaurantCheckResult) || !(boolean) restaurantCheckResult.get("is_present"))
             throw new CustomException(Utility.buildErrorObject("RESTAURANT_NOT_FOUND","Restaurant doesn't exists with provided restaurant id",404,"placeOrder"));
 
 //        Map<String,String> restaurantAndBranchCheckResult=restaurantInterface.getRestaurantAndBranchName(String.valueOf(request.getRestaurantId()),String.valueOf(request.getBranchId()));
         String restaurantAndBranchDetailsURL = restaurantURLMapper.getRestaurantAndBranchNamesURL(request.getRestaurantId(),request.getBranchId());
-        Map<String,String> restaurantAndBranchDetails= restTemplate.getForObject(restaurantAndBranchDetailsURL,Map.class);
+        ResponseEntity<Map> restaurantAndBranchEntity= restTemplate.exchange(restaurantAndBranchDetailsURL, HttpMethod.GET,httpEntity,Map.class);
+        Map restaurantAndBranchDetails= restaurantAndBranchEntity.getBody();
         if(Utility.isNullOrEmpty(restaurantAndBranchDetails))
             throw new CustomException(Utility.buildErrorObject("BRANCH_NOT_FOUND","Branch doesn't exists with provided branch id",404,"placeOrder"));
 
@@ -100,7 +117,8 @@ public class OrderService {
 //            Map<String,Object> itemCheckResult=restaurantInterface.checkFoodItemExistsInABranch(String.valueOf(orderItemDTO.getItemId()),String.valueOf(request.getBranchId()));
             log.info("Food Item Id : "+itemId);
             String itemCheckUrl=restaurantURLMapper.getFoodItemExistsInABranchURL(itemId, request.getBranchId(),"true");
-            Map<String,Object> itemCheckResult=restTemplate.getForObject(itemCheckUrl,Map.class);
+            ResponseEntity<Map> itemCheckEntity= restTemplate.exchange(itemCheckUrl, HttpMethod.GET,httpEntity,Map.class);
+            Map itemCheckResult=itemCheckEntity.getBody();
             if(Utility.isNullOrEmpty(itemCheckResult) || Utility.isNullOrEmpty(itemCheckResult.get("item_details")) || !(boolean) itemCheckResult.get("is_present"))
                 throw new CustomException(Utility.buildErrorObject("ITEM_NOT_FOUND","No Item found with Item Id : "+itemId,404,"placeOrder"));
             Map<String,Object> itemDetails= (Map<String, Object>) itemCheckResult.get("item_details");
@@ -118,39 +136,22 @@ public class OrderService {
         // update restaurant & branch orders total orders
 //        Map<String,Object> orderUpdateResult=restaurantInterface.updateRestaurantAndBranchOrders(String.valueOf(request.getRestaurantId()),String.valueOf(request.getBranchId()));
         String getRestaurantAndBranchOrdersCountUpdateUrl=restaurantURLMapper.getRestaurantAndBranchOrdersCountUpdateURL(request.getRestaurantId(),request.getBranchId());
-        try{
-            Request restaurantAndBranchOrderUpdateRequest=new Request.Builder()
-                    .url(getRestaurantAndBranchOrdersCountUpdateUrl)
-                    .patch(RequestBody.create(MediaType.parse("application/json"), Objects.requireNonNull(Utility.toJson(new HashMap<>()))))
-                    .build();
-            Response response=client.newCall(restaurantAndBranchOrderUpdateRequest).execute();
-            if(Utility.isNullOrEmpty(Utility.isNullOrEmpty(response)))
-                throw new CustomException(Utility.buildErrorObject("ORDERS_SYNC_FAILED","Error while updating restaurant and branch orders", 500,"placeOrder"));
-            if(response.code()!=200)
-                throw new CustomException(Utility.buildErrorObject("ORDERS_SYNC_FAILED",response.body().string(), response.code(),"placeOrder"));
-        } catch (Exception e) {
-            log.info(e);
-            throw new CustomException(Utility.buildErrorObject("ORDERS_SYNC_FAILED","Order count sync to restaurant failed",500,"placeOrder"));
-        }
+        Headers header=Headers.of(httpHeaders.asSingleValueMap());
+        Message<Map<String, String>> updateRestaurantAndBranchOrders = MessageBuilder
+                .withPayload(Map.of(
+                        "restaurant_id", String.valueOf(request.getRestaurantId()),
+                        "branch_id", String.valueOf(request.getBranchId())
+                ))
+                .setHeader(KafkaHeaders.TOPIC, "update_restaurant_and_branch_orders")
+                .build();
+        kafkaTemplate.send(updateRestaurantAndBranchOrders);
 
         // update item quantity and order count
-//        Map<String,Object> foodItemUpdateResult=restaurantInterface.updateFoodItemOrdersAndAvailability(foodItemDTOList);
-        String getUpdateFoodItemOrdersAndAvailabilityUrl=restaurantURLMapper.getUpdateFoodItemOrdersAndAvailabilityURL();
-        try{
-            Request itemUpdateRequest=new Request.Builder()
-                    .url(getUpdateFoodItemOrdersAndAvailabilityUrl)
-                    .patch(RequestBody.create(MediaType.parse("application/json"), Utility.toJson(foodItemDTOList)))
-                    .build();
-            client.setConnectTimeout(5,TimeUnit.MINUTES);
-            Response response= client.newCall(itemUpdateRequest).execute();
-            if(Utility.isNullOrEmpty(Utility.isNullOrEmpty(response)))
-                throw new CustomException(Utility.buildErrorObject("ITEMS_QUANTITY_SYNC_FAILED","Error while updating items quantity of food item", 500,"placeOrder"));
-            if(response.code()!=200)
-                throw new CustomException(Utility.buildErrorObject("ITEMS_QUANTITY_SYNC_FAILED",response.body().string(), response.code(),"placeOrder"));
-        } catch (Exception e) {
-            log.info(e);
-            throw new CustomException(Utility.buildErrorObject("ITEMS_QUANTITY_SYNC_FAILED","Items quantity sync to restaurant failed",500,"placeOrder"));
-        }
+        Message<List<FoodItemDTO>> updateItemQuantityAndOrderCount = MessageBuilder
+                .withPayload(foodItemDTOList)
+                .setHeader(KafkaHeaders.TOPIC, "update_item_quantity_and_sold_quantity")
+                .build();
+        kafkaTemplate.send(updateItemQuantityAndOrderCount);
 
         log.info("Saved Order : "+ Utility.toJson(savedOrder));
         OrderDTO orderDTO=ModelMapperUtility.map(savedOrder,OrderDTO.class);

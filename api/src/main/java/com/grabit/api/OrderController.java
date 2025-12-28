@@ -29,10 +29,10 @@ public class OrderController {
 
     @PostMapping(value = "/{memberId}/place",consumes = MediaType.APPLICATION_JSON_VALUE,produces = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAnyRole('ADMIN','USER') and hasAnyAuthority('END_USER','PLACE_ORDER')")
-    public Object placeOrder(@RequestBody OrderDTO request, @PathVariable(value = "memberId") String memberId, HttpServletResponse response){
+    public Object placeOrder(@RequestBody OrderDTO request, @PathVariable(value = "memberId") String memberId, @RequestHeader Map<String,String> headers, HttpServletResponse response){
         // add access denied validation for END_USER
         response.setStatus(201);
-        return orderService.placeOrder(request,memberId);
+        return orderService.placeOrder(request,memberId,headers);
     }
 
     @GetMapping(value = "/restaurant/{restaurantId}/branch/{branchId}",produces = MediaType.APPLICATION_JSON_VALUE)
