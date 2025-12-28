@@ -29,7 +29,7 @@ public class AppConfig {
     @Bean
     public NewTopic kafkaTopic(){
         return TopicBuilder
-                .name("")
+                .name("update_restaurant_and_branch_orders")
                 .build();
     }
 }
