@@ -7,6 +7,8 @@ import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.TopicBuilder;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
 
 @Configuration
 public class AppConfig {
@@ -27,9 +29,17 @@ public class AppConfig {
     }
 
     @Bean
-    public NewTopic kafkaTopic(){
+    public NewTopic updateRestaurantAndBranchOrdersKafkaTopic(){
         return TopicBuilder
                 .name("update_restaurant_and_branch_orders")
                 .build();
     }
+
+    @Bean
+    public NewTopic updateItemQuantityAndQuantitySoldKafkaTopic(){
+        return TopicBuilder
+                .name("update_item_quantity_and_sold_quantity")
+                .build();
+    }
+
 }
